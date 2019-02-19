@@ -268,7 +268,7 @@ func (p *PKI) TellPKI() {
 	ui.Println()
 	ui.PrintSelected("Root certificate", p.root)
 	ui.PrintSelected("Root private key", p.rootKey)
-	ui.PrintSelected("Root fingerprint", p.rootFingerprint)
+	ui.PrintSelected("Root fingerprint", p.rootFingerprint[10:])
 	ui.PrintSelected("Intermediate certificate", p.intermediate)
 	ui.PrintSelected("Intermediate private key", p.intermediateKey)
 }
@@ -351,7 +351,7 @@ func (p *PKI) Save() error {
 	ui.PrintSelected("Default configuration", p.defaults)
 	ui.PrintSelected("Certificate Authority configuration", p.config)
 	ui.Println()
-	ui.Println("Your PKI is ready to go. To generate certificates for individual services see 'step help ca'.")
+	ui.Println("Your PKI is ready to go.")
 
 	return nil
 }

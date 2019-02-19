@@ -122,14 +122,14 @@ func initAction(ctx *cli.Context) (err error) {
 		return err
 	}
 
-	name, err := ui.Prompt("What would you like to name your new PKI? (e.g. Smallstep)",
+	name, err := ui.Prompt("What would you like to name your new PKI?",
 		ui.WithValidateNotEmpty(), ui.WithValue(ctx.String("name")))
 	if err != nil {
 		return err
 	}
 
 	if configure {
-		names, err := ui.Prompt("What DNS names or IP addresses would you like to add to your new CA? (e.g. ca.smallstep.com[,1.1.1.1,etc.])",
+		names, err := ui.Prompt("What DNS names or IP addresses would you like to add?",
 			ui.WithValidateFunc(ui.DNS()), ui.WithValue(ctx.String("dns")))
 		if err != nil {
 			return err
@@ -144,13 +144,13 @@ func initAction(ctx *cli.Context) (err error) {
 			dnsNames = append(dnsNames, strings.TrimSpace(name))
 		}
 
-		address, err := ui.Prompt("What address will your new CA listen at? (e.g. :443)",
+		address, err := ui.Prompt("What address will your new CA listen at?",
 			ui.WithValidateFunc(ui.Address()), ui.WithValue(ctx.String("address")))
 		if err != nil {
 			return err
 		}
 
-		provisioner, err := ui.Prompt("What would you like to name the first provisioner for your new CA? (e.g. you@smallstep.com)",
+		provisioner, err := ui.Prompt("What would you like to name the first provisioner?",
 			ui.WithValidateNotEmpty(), ui.WithValue(ctx.String("provisioner")))
 		if err != nil {
 			return err
@@ -162,7 +162,7 @@ func initAction(ctx *cli.Context) (err error) {
 		p.SetCAURL(caURL)
 	}
 
-	pass, err := ui.PromptPasswordGenerate("What do you want your password to be? [leave empty and we'll generate one]",
+	pass, err := ui.PromptPasswordGenerate("What do you want your password to be?",
 		ui.WithRichPrompt(), ui.WithValue(password))
 	if err != nil {
 		return err
