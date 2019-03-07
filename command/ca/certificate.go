@@ -229,7 +229,7 @@ func (f *certificateFlow) getClient(ctx *cli.Context, subject, token string) (ca
 func (f *certificateFlow) GenerateToken(ctx *cli.Context, subject string, sans []string) (string, error) {
 	// For offline just generate the token
 	if f.offline {
-		return f.offlineCA.GenerateToken(ctx, subject, sans)
+		return f.offlineCA.GenerateToken(ctx, signType, subject, sans)
 	}
 
 	// Use online CA to get the provisioners and generate the token
@@ -264,7 +264,7 @@ func (f *certificateFlow) GenerateToken(ctx *cli.Context, subject string, sans [
 		}
 	}
 
-	return newTokenFlow(ctx, subject, sans, caURL, root, "", "", "", "", notBefore, notAfter)
+	return newTokenFlow(ctx, signType, subject, sans, caURL, root, "", "", "", "", notBefore, notAfter)
 }
 
 func (f *certificateFlow) Sign(ctx *cli.Context, token string, csr api.CertificateRequest, crtFile string) error {

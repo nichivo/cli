@@ -154,7 +154,7 @@ func (c *offlineCA) Revoke(req *api.RevokeRequest, rt http.RoundTripper) (*api.R
 }
 
 // GenerateToken creates the token used by the authority to sign certificates.
-func (c *offlineCA) GenerateToken(ctx *cli.Context, subject string, sans []string) (string, error) {
+func (c *offlineCA) GenerateToken(ctx *cli.Context, typ, subject string, sans []string) (string, error) {
 	// Use ca.json configuration for the root and audience
 	root := c.Root()
 	audience := c.Audience()
@@ -235,5 +235,5 @@ func (c *offlineCA) GenerateToken(ctx *cli.Context, subject string, sans []strin
 		return "", errors.Wrap(err, "error unmarshalling provisioning key")
 	}
 
-	return generateToken(subject, sans, kid, issuer, audience, root, notBefore, notAfter, jwk)
+	return generateToken(typ, subject, sans, kid, issuer, audience, root, notBefore, notAfter, jwk)
 }

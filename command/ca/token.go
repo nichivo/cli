@@ -31,6 +31,11 @@ type provisionersSelect struct {
 	JWK    jose.JSONWebKey
 }
 
+const (
+	signType   = "sign"
+	revokeType = "revoke"
+)
+
 func tokenCommand() cli.Command {
 	return cli.Command{
 		Name:   "token",
@@ -150,6 +155,11 @@ the certificate authority.`,
 				Usage: `Creates a token without contacting the certificate authority. Offline mode
 requires the flags <--ca-config> or <--kid>, <--issuer>, <--key>, <--ca-url>, and <--root>.`,
 			},
+			cli.StringFlag{
+				Name:  "type",
+				Usage: `The <type> of token that should be created. Default value is 'sign'.`,
+				Value: "sign",
+			},
 			caConfigFlag,
 			flags.Force,
 		},
@@ -169,6 +179,7 @@ func tokenAction(ctx *cli.Context) error {
 	keyFile := ctx.String("key")
 	offline := ctx.Bool("offline")
 	sans := ctx.StringSlice("san")
+	typ := ctx.String("type")
 
 	caURL := ctx.String("ca-url")
 	if len(caURL) == 0 {
@@ -181,6 +192,19 @@ func tokenAction(ctx *cli.Context) error {
 		if _, err := os.Stat(root); err != nil {
 			return errs.RequiredFlag(ctx, "root")
 		}
+	}
+
+	// Verify that --type has an acceptable value ['sign', 'revoke'].
+	switch typ {
+	case signType, revokeType:
+		break
+	default:
+		return errs.InvalidFlagValue(ctx, "type", typ, "sign, revoke")
+	}
+
+	// --san and --type revoke are incompatible. Revocation tokens do not support SANs.
+	if typ == revokeType && len(sans) > 0 {
+		return errs.IncompatibleFlagValue(ctx, "san", "type", revokeType)
 	}
 
 	// parse times or durations
@@ -196,12 +220,12 @@ func tokenAction(ctx *cli.Context) error {
 	var err error
 	var token string
 	if offline {
-		token, err = offlineTokenFlow(ctx, subject, sans)
+		token, err = offlineTokenFlow(ctx, typ, subject, sans)
 		if err != nil {
 			return err
 		}
 	} else {
-		token, err = newTokenFlow(ctx, subject, sans, caURL, root, kid, issuer, passwordFile, keyFile, notBefore, notAfter)
+		token, err = newTokenFlow(ctx, typ, subject, sans, caURL, root, kid, issuer, passwordFile, keyFile, notBefore, notAfter)
 		if err != nil {
 			return err
 		}
@@ -214,7 +238,7 @@ func tokenAction(ctx *cli.Context) error {
 }
 
 // parseAudience creates the ca audience url from the ca-url
-func parseAudience(ctx *cli.Context) (string, error) {
+func parseAudience(ctx *cli.Context, typ string) (string, error) {
 	caURL := ctx.String("ca-url")
 	if len(caURL) == 0 {
 		return "", errs.RequiredFlag(ctx, "ca-url")
@@ -226,8 +250,19 @@ func parseAudience(ctx *cli.Context) (string, error) {
 	}
 	switch strings.ToLower(audience.Scheme) {
 	case "https", "":
+		var path string
+		switch typ {
+		// default
+		case signType:
+			path = "/1.0/sign"
+		// revocation token
+		case revokeType:
+			path = "/1.0/revoke"
+		default:
+			return "", errs.InvalidFlagValue(ctx, "type", typ, "sign, revoke")
+		}
 		audience.Scheme = "https"
-		audience = audience.ResolveReference(&url.URL{Path: "/1.0/sign"})
+		audience = audience.ResolveReference(&url.URL{Path: path})
 		return audience.String(), nil
 	default:
 		return "", errs.InvalidFlagValue(ctx, "ca-url", caURL, "")
@@ -236,7 +271,7 @@ func parseAudience(ctx *cli.Context) (string, error) {
 
 // generateToken generates a provisioning or bootstrap token with the given
 // parameters.
-func generateToken(sub string, sans []string, kid, iss, aud, root string, notBefore, notAfter time.Time, jwk *jose.JSONWebKey) (string, error) {
+func generateToken(typ string, sub string, sans []string, kid, iss, aud, root string, notBefore, notAfter time.Time, jwk *jose.JSONWebKey) (string, error) {
 	// A random jwt id will be used to identify duplicated tokens
 	jwtID, err := randutil.Hex(64) // 256 bits
 	if err != nil {
@@ -253,12 +288,15 @@ func generateToken(sub string, sans []string, kid, iss, aud, root string, notBef
 		tokOptions = append(tokOptions, token.WithRootCA(root))
 	}
 
-	// If there are no SANs then add the 'subject' (common-name) as the only SAN.
-	if len(sans) == 0 {
-		sans = []string{sub}
+	// If 'sign' token then add SANs.
+	if typ == signType {
+		// If there are no SANs then add the 'subject' (common-name) as the only SAN.
+		if len(sans) == 0 {
+			sans = []string{sub}
+		}
+		tokOptions = append(tokOptions, token.WithSANS(sans))
 	}
 
-	tokOptions = append(tokOptions, token.WithSANS(sans))
 	if !notBefore.IsZero() || !notAfter.IsZero() {
 		if notBefore.IsZero() {
 			notBefore = time.Now()
@@ -278,9 +316,9 @@ func generateToken(sub string, sans []string, kid, iss, aud, root string, notBef
 }
 
 // newTokenFlow implements the common flow used to generate a token
-func newTokenFlow(ctx *cli.Context, subject string, sans []string, caURL, root, kid, issuer, passwordFile, keyFile string, notBefore, notAfter time.Time) (string, error) {
+func newTokenFlow(ctx *cli.Context, typ, subject string, sans []string, caURL, root, kid, issuer, passwordFile, keyFile string, notBefore, notAfter time.Time) (string, error) {
 	// Get audience from ca-url
-	audience, err := parseAudience(ctx)
+	audience, err := parseAudience(ctx, typ)
 	if err != nil {
 		return "", err
 	}
@@ -373,14 +411,14 @@ func newTokenFlow(ctx *cli.Context, subject string, sans []string, caURL, root, 
 		}
 	}
 
-	return generateToken(subject, sans, kid, issuer, audience, root, notBefore, notAfter, jwk)
+	return generateToken(typ, subject, sans, kid, issuer, audience, root, notBefore, notAfter, jwk)
 }
 
 // offlineTokenFlow generates a provisioning token using either
 //   1. static configuration from ca.json (created with `step ca init`)
 //   2. input from command line flags
 // These two options are mutually exclusive and priority is given to ca.json.
-func offlineTokenFlow(ctx *cli.Context, subject string, sans []string) (string, error) {
+func offlineTokenFlow(ctx *cli.Context, typ, subject string, sans []string) (string, error) {
 	caConfig := ctx.String("ca-config")
 	if caConfig == "" {
 		return "", errs.InvalidFlagValue(ctx, "ca-config", "", "")
@@ -392,7 +430,7 @@ func offlineTokenFlow(ctx *cli.Context, subject string, sans []string) (string, 
 		if err != nil {
 			return "", err
 		}
-		return offlineCA.GenerateToken(ctx, subject, sans)
+		return offlineCA.GenerateToken(ctx, typ, subject, sans)
 	}
 
 	kid := ctx.String("kid")
@@ -415,7 +453,7 @@ func offlineTokenFlow(ctx *cli.Context, subject string, sans []string) (string, 
 	}
 
 	// Get audience from ca-url
-	audience, err := parseAudience(ctx)
+	audience, err := parseAudience(ctx, typ)
 	if err != nil {
 		return "", err
 	}
@@ -448,7 +486,7 @@ func offlineTokenFlow(ctx *cli.Context, subject string, sans []string) (string, 
 		kid = base64.RawURLEncoding.EncodeToString(hash)
 	}
 
-	return generateToken(subject, sans, kid, issuer, audience, root, notBefore, notAfter, jwk)
+	return generateToken(typ, subject, sans, kid, issuer, audience, root, notBefore, notAfter, jwk)
 }
 
 // provisionerFilter returns a slice of provisioners that pass the given filter.
