@@ -26,6 +26,7 @@ type offlineProvisionersSelect struct {
 type caClient interface {
 	Sign(req *api.SignRequest) (*api.SignResponse, error)
 	Renew(tr http.RoundTripper) (*api.SignResponse, error)
+	Revoke(req *api.RevokeRequest, tr http.RoundTripper) (*api.RevokeResponse, error)
 }
 
 // offlineCA is a wrapper on top of the certificates authority methods that is
@@ -127,6 +128,29 @@ func (c *offlineCA) Renew(rt http.RoundTripper) (*api.SignResponse, error) {
 		CaPEM:      api.Certificate{ca},
 		TLSOptions: c.authority.GetTLSOptions(),
 	}, nil
+}
+
+// Revoke is a wrapper on top of certificates Revoke method. It returns an
+// api.RevokeResponse.
+func (c *offlineCA) Revoke(req *api.RevokeRequest, rt http.RoundTripper) (*api.RevokeResponse, error) {
+	// Convert the reason to OCSP revocation code.
+	reasonCode, err := api.ReasonStringToCode(req.Reason)
+	if err != nil {
+		return nil, err
+	}
+
+	// it should not panic as this is always internal code
+	//tr := rt.(*http.Transport)
+	//asn1Data := tr.TLSClientConfig.Certificates[0].Certificate[0]
+	//peer, err := x509.ParseCertificate(asn1Data)
+	//if err != nil {
+	//	return nil, errors.Wrap(err, "error parsing certificate")
+	//}
+	// revoke cert using authority
+	if err := c.authority.Revoke(req.Serial, "provisioner-id", reasonCode); err != nil {
+		return nil, err
+	}
+	return &api.RevokeResponse{Status: "ok"}, nil
 }
 
 // GenerateToken creates the token used by the authority to sign certificates.
