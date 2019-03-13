@@ -140,7 +140,7 @@ func WithFirstBlock() Options {
 
 // ReadCertificate returns a *x509.Certificate from the given filename. It
 // supports certificates formats PEM and DER.
-func ReadCertificate(filename string) (*x509.Certificate, error) {
+func ReadCertificate(filename string, opts ...Options) (*x509.Certificate, error) {
 	b, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, errs.FileError(err, filename)
@@ -148,7 +148,7 @@ func ReadCertificate(filename string) (*x509.Certificate, error) {
 
 	// PEM format
 	if bytes.HasPrefix(b, []byte("-----BEGIN ")) {
-		crt, err := Read(filename)
+		crt, err := Read(filename, opts...)
 		if err != nil {
 			return nil, err
 		}

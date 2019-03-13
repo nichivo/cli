@@ -1,14 +1,18 @@
 package ca
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 
 	"github.com/pkg/errors"
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/authority"
+	"github.com/smallstep/cli/crypto/pemutil"
+	"github.com/smallstep/cli/crypto/x509util"
 	"github.com/smallstep/cli/errs"
 	"github.com/smallstep/cli/jose"
 	"github.com/smallstep/cli/ui"
@@ -26,7 +30,7 @@ type offlineProvisionersSelect struct {
 type caClient interface {
 	Sign(req *api.SignRequest) (*api.SignResponse, error)
 	Renew(tr http.RoundTripper) (*api.SignResponse, error)
-	Revoke(req *api.RevokeRequest, tr http.RoundTripper) (*api.RevokeResponse, error)
+	Revoke(req *api.RevokeRequest) (*api.RevokeResponse, error)
 }
 
 // offlineCA is a wrapper on top of the certificates authority methods that is
@@ -63,6 +67,57 @@ func newOfflineCA(configFile string) (*offlineCA, error) {
 		config:     config,
 		configFile: configFile,
 	}, nil
+}
+
+// newOfflineMTLSCA verifies the client cert and key against the CA root and
+// initializes an offline CA.
+func newOfflineMTLSCA(configFile, crtFile, keyFile string) (*offlineCA, error) {
+	c, err := newOfflineCA(configFile)
+	if err != nil {
+		return nil, err
+	}
+
+	crt, err := pemutil.ReadCertificate(crtFile, pemutil.WithFirstBlock())
+	if err != nil {
+		return nil, err
+	}
+	key, err := pemutil.Read(keyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	crtPem, err := pemutil.Serialize(crt)
+	if err != nil {
+		return nil, err
+	}
+	keyPem, err := pemutil.Serialize(key)
+	if err != nil {
+		return nil, err
+	}
+	// Validate that the certificate and key match
+	if _, err := tls.X509KeyPair(pem.EncodeToMemory(crtPem), pem.EncodeToMemory(keyPem)); err != nil {
+		return nil, errors.Wrap(err, "error loading x509 key pair")
+	}
+
+	rootPool, err := x509util.ReadCertPool(c.Root())
+	if err != nil {
+		return nil, err
+	}
+	intermediatePool, err := x509util.ReadCertPool(c.config.IntermediateCert)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := x509.VerifyOptions{
+		Roots:         rootPool,
+		Intermediates: intermediatePool,
+	}
+
+	if _, err := crt.Verify(opts); err != nil {
+		return nil, errors.Wrapf(err, "failed to verify certificate")
+	}
+
+	return c, nil
 }
 
 // Audience returns the token audience.
@@ -102,8 +157,8 @@ func (c *offlineCA) Sign(req *api.SignRequest) (*api.SignResponse, error) {
 		return nil, err
 	}
 	return &api.SignResponse{
-		ServerPEM:  api.Certificate{cert},
-		CaPEM:      api.Certificate{ca},
+		ServerPEM:  api.Certificate{Certificate: cert},
+		CaPEM:      api.Certificate{Certificate: ca},
 		TLSOptions: c.authority.GetTLSOptions(),
 	}, nil
 }
@@ -124,28 +179,21 @@ func (c *offlineCA) Renew(rt http.RoundTripper) (*api.SignResponse, error) {
 		return nil, err
 	}
 	return &api.SignResponse{
-		ServerPEM:  api.Certificate{cert},
-		CaPEM:      api.Certificate{ca},
+		ServerPEM:  api.Certificate{Certificate: cert},
+		CaPEM:      api.Certificate{Certificate: ca},
 		TLSOptions: c.authority.GetTLSOptions(),
 	}, nil
 }
 
 // Revoke is a wrapper on top of certificates Revoke method. It returns an
 // api.RevokeResponse.
-func (c *offlineCA) Revoke(req *api.RevokeRequest, rt http.RoundTripper) (*api.RevokeResponse, error) {
+func (c *offlineCA) Revoke(req *api.RevokeRequest) (*api.RevokeResponse, error) {
 	// Convert the reason to OCSP revocation code.
 	reasonCode, err := api.ReasonStringToCode(req.Reason)
 	if err != nil {
 		return nil, err
 	}
 
-	// it should not panic as this is always internal code
-	//tr := rt.(*http.Transport)
-	//asn1Data := tr.TLSClientConfig.Certificates[0].Certificate[0]
-	//peer, err := x509.ParseCertificate(asn1Data)
-	//if err != nil {
-	//	return nil, errors.Wrap(err, "error parsing certificate")
-	//}
 	// revoke cert using authority
 	if err := c.authority.Revoke(req.Serial, "provisioner-id", reasonCode); err != nil {
 		return nil, err
